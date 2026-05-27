@@ -40,7 +40,7 @@ TRAIN_CONFIG = {
     "lambda_l1":         0.0,    # L1 Loss 重み (0 = 使わない、多様性重視)
     "validation_split":  0.2,
     "save_interval":     20,     # 何エポックごとにチェックポイントを保存するか
-    "use_wandb":         True,
+    "use_wandb":         False,
     "model_save_path":   os.path.join(BASE_DIR, "saved_models", f"GAN_{DT_NOW:%Y%m%d_%H%M}"),
 }
 
