@@ -24,6 +24,7 @@
 import glob
 import os
 
+import h5py
 import numpy as np
 import torch
 from natsort import natsorted
@@ -45,58 +46,84 @@ def generate() -> None:
             f"学習済みモデルが見つかりません: {model_path}\n"
             "config.py の GENERATE_CONFIG['trained_model_path'] を確認してください。"
         )
-    G.load_state_dict(torch.load(model_path, map_location=device))
+    G.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     G.eval().to(device)
     print(f"モデルを読み込みました: {model_path}")
-
-    # --- クリーン信号ファイルの取得 ---
-    base        = config.GENERATE_CONFIG["source_data_path"]
-    label_real  = os.path.join(base, config.DATA_CONFIG["label_dir_name"], config.DATA_CONFIG["real_dir_name"])
-    label_imag  = os.path.join(base, config.DATA_CONFIG["label_dir_name"], config.DATA_CONFIG["imag_dir_name"])
-
-    real_label_files = natsorted(glob.glob(os.path.join(label_real, "real_label_*.txt")))
-    if not real_label_files:
-        raise FileNotFoundError(f"クリーン信号が見つかりません: {label_real}")
-
-    imag_label_files = [
-        f.replace(label_real, label_imag).replace("real_", "imag_")
-        for f in real_label_files
-    ]
 
     latent_dim      = config.MODEL_CONFIG["latent_dim"]
     chirps_per_file = config.PREPROCESS_CONFIG["chirps_per_file"]
     num_variations  = config.GENERATE_CONFIG["num_variations"]
     out_base        = config.GENERATE_CONFIG["output_path"]
+    data_format     = config.DATA_CONFIG["data_format"]
 
-    print(
-        f"\n{len(real_label_files)} ファイル × {num_variations} variation を生成します..."
-    )
+    # --- クリーン信号の取得 ---
+    if data_format == "hdf5":
+        hdf5_path = config.DATA_CONFIG["hdf5_path"]
+        if not os.path.exists(hdf5_path):
+            raise FileNotFoundError(f"HDF5 ファイルが見つかりません: {hdf5_path}")
+        with h5py.File(hdf5_path, "r") as f:
+            label_real_all = f["label_real"][:]  # (N_files, chirps, seq_len) or (N_chirps, seq_len)
+            label_imag_all = f["label_imag"][:]
+        # 3次元の場合はそのまま、2次元の場合は chirps_per_file 単位に分割
+        if label_real_all.ndim == 3:
+            n_files = label_real_all.shape[0]
+            clean_blocks = [
+                np.stack([label_real_all[i], label_imag_all[i]], axis=-1).astype(np.float32)
+                for i in range(n_files)
+            ]
+        else:
+            n_total = label_real_all.shape[0]
+            n_files = n_total // chirps_per_file
+            clean_blocks = [
+                np.stack([
+                    label_real_all[i * chirps_per_file:(i + 1) * chirps_per_file],
+                    label_imag_all[i * chirps_per_file:(i + 1) * chirps_per_file],
+                ], axis=-1).astype(np.float32)
+                for i in range(n_files)
+            ]
+        print(f"HDF5 から {n_files} ブロック読み込みました: {hdf5_path}")
+    else:
+        base       = config.GENERATE_CONFIG["source_data_path"]
+        label_real = os.path.join(base, config.DATA_CONFIG["label_dir_name"], config.DATA_CONFIG["real_dir_name"])
+        label_imag = os.path.join(base, config.DATA_CONFIG["label_dir_name"], config.DATA_CONFIG["imag_dir_name"])
+        real_label_files = natsorted(glob.glob(os.path.join(label_real, "real_label_*.txt")))
+        if not real_label_files:
+            raise FileNotFoundError(f"クリーン信号が見つかりません: {label_real}")
+        imag_label_files = [
+            f.replace(label_real, label_imag).replace("real_", "imag_")
+            for f in real_label_files
+        ]
+        clean_blocks = []
+        for rf, imf in zip(real_label_files, imag_label_files):
+            real_lb = utils.load_data_from_txt(rf)
+            imag_lb = utils.load_data_from_txt(imf)
+            clean_blocks.append(
+                np.stack([real_lb, imag_lb], axis=-1).astype(np.float32)
+            )
+        n_files = len(clean_blocks)
 
+    print(f"\n{n_files} ブロック × {num_variations} variation を生成します...")
+
+    # --- 生成ループ ---
     for var_idx in range(num_variations):
-        var_tag = f"variation_{var_idx + 1:02d}"
+        var_tag  = f"variation_{var_idx + 1:02d}"
         out_real = os.path.join(out_base, var_tag, config.DATA_CONFIG["input_dir_name"], config.DATA_CONFIG["real_dir_name"])
         out_imag = os.path.join(out_base, var_tag, config.DATA_CONFIG["input_dir_name"], config.DATA_CONFIG["imag_dir_name"])
         os.makedirs(out_real, exist_ok=True)
         os.makedirs(out_imag, exist_ok=True)
 
-        for file_idx, (rf, imf) in enumerate(zip(real_label_files, imag_label_files)):
-            # クリーン信号を読み込む: shape (chirps, 512)
-            real_lb = utils.load_data_from_txt(rf)
-            imag_lb = utils.load_data_from_txt(imf)
-            clean = np.stack([real_lb, imag_lb], axis=-1).astype(np.float32)  # (16, 512, 2)
-
+        for file_idx, clean in enumerate(clean_blocks):
             # クリーン信号自身の max_abs で正規化
-            clean_norm, max_abs = utils.max_abs_normalize_complex_channels(clean)  # (16, 512, 2)
-
-            clean_tensor = torch.from_numpy(clean_norm).to(device)   # (16, 512, 2)
+            clean_norm, max_abs = utils.max_abs_normalize_complex_channels(clean)
+            clean_tensor = torch.from_numpy(clean_norm).to(device)
 
             # ランダムノイズで干渉信号を生成
-            z = torch.randn(chirps_per_file, latent_dim, device=device)
+            z = torch.randn(clean.shape[0], latent_dim, device=device)
             with torch.no_grad():
-                fake_norm = G(clean_tensor, z)   # (16, 512, 2)
+                fake_norm = G(clean_tensor, z)
 
             # 逆正規化して元のスケールに戻す
-            fake_np = fake_norm.cpu().numpy()                     # (16, 512, 2)
+            fake_np = fake_norm.cpu().numpy()
             fake    = utils.max_abs_denormalize_complex_channels(fake_np, max_abs)
 
             # テキストファイルとして保存 (1 行 = 1 チャープ, 512 列)
