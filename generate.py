@@ -9,6 +9,8 @@
     generated_data/YYYYMMDD_HHMM/
         variation_01/input/real/real_input_XXXX.txt
         variation_01/input/imag/imag_input_XXXX.txt
+        variation_01/label/real/real_label_XXXX.txt
+        variation_01/label/imag/imag_label_XXXX.txt
         variation_02/...
         ...
 
@@ -107,10 +109,14 @@ def generate() -> None:
     # --- 生成ループ ---
     for var_idx in range(num_variations):
         var_tag  = f"variation_{var_idx + 1:02d}"
-        out_real = os.path.join(out_base, var_tag, config.DATA_CONFIG["input_dir_name"], config.DATA_CONFIG["real_dir_name"])
-        out_imag = os.path.join(out_base, var_tag, config.DATA_CONFIG["input_dir_name"], config.DATA_CONFIG["imag_dir_name"])
+        out_real       = os.path.join(out_base, var_tag, config.DATA_CONFIG["input_dir_name"], config.DATA_CONFIG["real_dir_name"])
+        out_imag       = os.path.join(out_base, var_tag, config.DATA_CONFIG["input_dir_name"], config.DATA_CONFIG["imag_dir_name"])
+        out_label_real = os.path.join(out_base, var_tag, config.DATA_CONFIG["label_dir_name"], config.DATA_CONFIG["real_dir_name"])
+        out_label_imag = os.path.join(out_base, var_tag, config.DATA_CONFIG["label_dir_name"], config.DATA_CONFIG["imag_dir_name"])
         os.makedirs(out_real, exist_ok=True)
         os.makedirs(out_imag, exist_ok=True)
+        os.makedirs(out_label_real, exist_ok=True)
+        os.makedirs(out_label_imag, exist_ok=True)
 
         for file_idx, clean in enumerate(clean_blocks):
             # クリーン信号自身の max_abs で正規化
@@ -136,6 +142,18 @@ def generate() -> None:
             np.savetxt(
                 os.path.join(out_imag, f"imag_input_{file_num:04d}.txt"),
                 fake[:, :, 1],
+                fmt="%.6e",
+            )
+            # クリーン信号 (label) を元のスケールに戻して保存
+            clean_denorm = utils.max_abs_denormalize_complex_channels(clean_norm, max_abs)
+            np.savetxt(
+                os.path.join(out_label_real, f"real_label_{file_num:04d}.txt"),
+                clean_denorm[:, :, 0],
+                fmt="%.6e",
+            )
+            np.savetxt(
+                os.path.join(out_label_imag, f"imag_label_{file_num:04d}.txt"),
+                clean_denorm[:, :, 1],
                 fmt="%.6e",
             )
 
