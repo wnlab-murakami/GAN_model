@@ -51,3 +51,10 @@ GENERATE_CONFIG = {
     "output_path":          os.path.join(BASE_DIR, "generated_data", f"{DT_NOW:%Y%m%d_%H%M}"),
     "num_variations":       5,   # 1つのクリーン信号から生成する干渉信号のバリエーション数
 }
+
+GENERATE_CONFIG_2D = {
+# 学習済み 2D モデルのディレクトリ (train_2d.py が "GAN_YYYYMMDD_HHMM_2D" で保存)
+"trained_model_path": os.path.join(BASE_DIR, "saved_models", "GAN_20260528_2233_2D"),
+"output_path": os.path.join(BASE_DIR, "generated_data", f"{DT_NOW:%Y%m%d_%H%M}_2D"),
+"num_variations": 5,
+}
