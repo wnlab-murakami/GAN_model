@@ -13,16 +13,16 @@ DATA_CONFIG = {
     "imag_dir_name":      "imag",
     "file_pattern":       "real_input_*.txt",
     # HDF5 設定 (data_format="hdf5" のとき使用)
-    "hdf5_path":          os.path.join(BASE_DIR, "learning_data", "data.h5"),
+    "hdf5_path":          os.path.join(BASE_DIR, "learning_data", "gan_combined_data.hdf5"),
     # "txt": テキストファイル形式  /  "hdf5": HDF5 形式
     "data_format":        "hdf5",
 }
 
 PREPROCESS_CONFIG = {
     "normalization_method": "max_abs_scaling",
-    "sequence_length":      512,
+    "sequence_length":      1024,  # モデルに入力するシーケンスの長さ (サンプル数)
     "num_features":         2,    # [実部, 虚部]
-    "chirps_per_file":      16,
+    "chirps_per_file":      128,  # 1ファイルあたりのチャープ数 (HDF5 形式で使用)
 }
 
 MODEL_CONFIG = {
@@ -32,7 +32,7 @@ MODEL_CONFIG = {
 
 TRAIN_CONFIG = {
     "epochs":            200,
-    "batch_size":        64,
+    "batch_size":        16,
     "lr_g":              1e-4,   # Generator 学習率
     "lr_d":              4e-4,   # Critic 学習率 (TTUR: D > G)
     "n_critic":          5,      # Critic 更新回数 / Generator 1回
@@ -46,7 +46,7 @@ TRAIN_CONFIG = {
 
 GENERATE_CONFIG = {
     # 学習済みモデルのディレクトリ (train.py 実行後に G_final.pth があるパスを指定)
-    "trained_model_path":   os.path.join(BASE_DIR, "saved_models", "latest"),
+    "trained_model_path":   os.path.join(BASE_DIR, "saved_models", "GAN_20260528_2233"),
     "source_data_path":     os.path.join(BASE_DIR, "learning_data"),
     "output_path":          os.path.join(BASE_DIR, "generated_data", f"{DT_NOW:%Y%m%d_%H%M}"),
     "num_variations":       5,   # 1つのクリーン信号から生成する干渉信号のバリエーション数

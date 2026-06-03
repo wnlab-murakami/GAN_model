@@ -62,7 +62,7 @@ class GANRadarDataset(Dataset):
         clean_norm = clean / max_abs.squeeze(0)                             # (512, 2)
 
         return (
-            torch.from_numpy(clean_norm.squeeze(0).copy()),   # (512, 2)
+            torch.from_numpy(clean_norm.copy()),   # (512, 2)
             torch.from_numpy(interf_norm.squeeze(0).copy()),  # (512, 2)
         )
 
@@ -125,16 +125,9 @@ def get_dataloaders(
 
 class GANRadarHDF5Dataset(Dataset):
     """
-    HDF5 形式データセット (フラット構造)。
-
-    想定する HDF5 ファイルのキー:
-        input_real  [N_chirps, sequence_length]
-        input_imag  [N_chirps, sequence_length]
-        label_real  [N_chirps, sequence_length]
-        label_imag  [N_chirps, sequence_length]
-
-    __getitem__ の戻り値:
-        (clean_norm, interf_norm) — 干渉あり信号の最大絶対値で両方を正規化
+    HDF5 形式データセット。
+    [N_chirps, sequence_length] (2次元) または 
+    [N_files, chirps_per_file, sequence_length] (3次元) の両方に対応。
     """
 
     def __init__(self, hdf5_path: str):
@@ -144,10 +137,16 @@ class GANRadarHDF5Dataset(Dataset):
             for key in ("input_real", "input_imag", "label_real", "label_imag"):
                 if key not in f:
                     raise KeyError(f"HDF5 ファイルにキー '{key}' が存在しません: {hdf5_path}")
-            self.n_samples = f["input_real"].shape[0]
+            
+            self.shape = f["input_real"].shape
+            if len(self.shape) == 3:
+                self.n_samples = self.shape[0] * self.shape[1]
+                self.chirps_per_file = self.shape[1]
+            else:
+                self.n_samples = self.shape[0]
+                self.chirps_per_file = 1
 
     def _get_file(self) -> h5py.File:
-        """プロセスごとにファイルハンドルをキャッシュする (num_workers=0 対応)。"""
         if self._file is None:
             self._file = h5py.File(self.hdf5_path, "r")
         return self._file
@@ -157,10 +156,19 @@ class GANRadarHDF5Dataset(Dataset):
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
         f = self._get_file()
-        real_in = f["input_real"][idx].astype(np.float32)  # (sequence_length,)
-        imag_in = f["input_imag"][idx].astype(np.float32)
-        real_lb = f["label_real"][idx].astype(np.float32)
-        imag_lb = f["label_imag"][idx].astype(np.float32)
+        
+        if len(self.shape) == 3:
+            file_idx = idx // self.chirps_per_file
+            chirp_idx = idx % self.chirps_per_file
+            real_in = f["input_real"][file_idx, chirp_idx].astype(np.float32)
+            imag_in = f["input_imag"][file_idx, chirp_idx].astype(np.float32)
+            real_lb = f["label_real"][file_idx, chirp_idx].astype(np.float32)
+            imag_lb = f["label_imag"][file_idx, chirp_idx].astype(np.float32)
+        else:
+            real_in = f["input_real"][idx].astype(np.float32)
+            imag_in = f["input_imag"][idx].astype(np.float32)
+            real_lb = f["label_real"][idx].astype(np.float32)
+            imag_lb = f["label_imag"][idx].astype(np.float32)
 
         interf = np.stack([real_in, imag_in], axis=-1)  # (512, 2)
         clean  = np.stack([real_lb, imag_lb], axis=-1)  # (512, 2)
@@ -170,7 +178,7 @@ class GANRadarHDF5Dataset(Dataset):
         clean_norm = clean / max_abs.squeeze(0)                              # (512, 2)
 
         return (
-            torch.from_numpy(clean_norm.squeeze(0).copy()),   # (512, 2)
+            torch.from_numpy(clean_norm.copy()),              # (512, 2)
             torch.from_numpy(interf_norm.squeeze(0).copy()),  # (512, 2)
         )
 
