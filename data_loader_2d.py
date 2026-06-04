@@ -18,6 +18,8 @@ from torch.utils.data import DataLoader, Dataset, random_split
 import config
 import utils
 
+_USE_RANGE_FFT: bool = config.PREPROCESS_CONFIG.get("use_range_fft", False)
+
 
 # ---------------------------------------------------------------------------
 # HDF5 形式 — ブロック単位 Dataset
@@ -74,6 +76,11 @@ class GANRadarHDF5Dataset2D(Dataset):
         # (chirps, seq_len, 2)
         interf = np.stack([real_in, imag_in], axis=-1)
         clean  = np.stack([real_lb, imag_lb], axis=-1)
+
+        # レンジFFT: fast-time 方向を周波数領域に変換 (shape は変化しない)
+        if _USE_RANGE_FFT:
+            interf = utils.apply_range_fft(interf)
+            clean  = utils.apply_range_fft(clean)
 
         # ブロック全体の max_abs で正規化 (utils 関数はそのまま使える)
         # interf shape: (chirps, seq_len, 2) → expand_dims で (1, chirps, seq_len, 2)
@@ -143,8 +150,9 @@ def get_dataloaders_2d(
         pin_memory=True,
     )
 
+    domain = "range-chirp (FFT適用)" if _USE_RANGE_FFT else "時間領域"
     print(
-        f"[2D / HDF5] 総ブロック数: {n_total}  "
+        f"[2D / HDF5 / {domain}] 総ブロック数: {n_total}  "
         f"学習: {len(train_ds)}  検証: {len(valid_ds)}"
     )
     return train_loader, valid_loader

@@ -5,6 +5,11 @@
     - 入力単位: 1チャープ → 1ファイルブロック (chirps, seq_len, 2)
     - 正規化: ブロック全体の max_abs を使用
 
+use_range_fft = True のとき:
+    - クリーン信号にレンジ FFT を適用してからモデルに入力する (学習時と同じ前処理)
+    - output_domain="same"  → 出力もレンジ-チャープ域 (周波数領域) のまま保存
+    - output_domain="time"  → 出力に IFFT を適用して時間領域に戻してから保存
+
 使い方:
     1. config.py の GENERATE_CONFIG_2D["trained_model_path"] に
        学習済みモデルのディレクトリ (G_final.pth があるパス) を設定する。
@@ -30,10 +35,25 @@ import config
 import model_2d
 import utils
 
+_USE_RANGE_FFT: bool = config.PREPROCESS_CONFIG.get("use_range_fft", False)
 
-def generate_2d() -> None:
+
+def generate_2d(output_domain: str = "same") -> None:
+    """
+    Args:
+        output_domain:
+            "same"  — 学習時と同じドメインで出力する。
+                      use_range_fft=True なら周波数領域 (レンジ-チャープ) のまま保存。
+            "time"  — 常に時間領域で出力する。
+                      use_range_fft=True のとき IFFT を適用してから保存。
+    """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"デバイス: {device}")
+
+    apply_ifft = _USE_RANGE_FFT and (output_domain == "time")
+    domain_label = "時間領域 (IFFT適用)" if apply_ifft else \
+                   "レンジ-チャープ域" if _USE_RANGE_FFT else "時間領域"
+    print(f"FFT前処理: {'有効' if _USE_RANGE_FFT else '無効'}  出力ドメイン: {domain_label}")
 
     # --- 学習済み Generator2D の読み込み ---
     G, _ = model_2d.build_models_2d()
@@ -69,7 +89,6 @@ def generate_2d() -> None:
         )
 
     n_files = label_real_all.shape[0]
-    # (N_files, chirps, seq_len, 2) にまとめる
     clean_blocks = np.stack(
         [label_real_all, label_imag_all], axis=-1
     ).astype(np.float32)  # (N_files, chirps, seq_len, 2)
@@ -90,49 +109,53 @@ def generate_2d() -> None:
         os.makedirs(out_label_imag, exist_ok=True)
 
         for file_idx in range(n_files):
-            clean = clean_blocks[file_idx]  # (chirps, seq_len, 2)
+            clean = clean_blocks[file_idx]  # (chirps, seq_len, 2) — 時間領域
+
+            # レンジ FFT: 学習時と同じ前処理を適用
+            if _USE_RANGE_FFT:
+                clean = utils.apply_range_fft(clean)  # → レンジ-チャープ域
 
             # ブロック全体の max_abs で正規化
-            clean_batch = np.expand_dims(clean, axis=0)            # (1, chirps, seq_len, 2)
+            clean_batch = np.expand_dims(clean, axis=0)             # (1, chirps, seq_len, 2)
             clean_norm, max_abs = utils.max_abs_normalize_complex_channels(clean_batch)
-            clean_tensor = torch.from_numpy(clean_norm).to(device)  # (1, chirps, seq_len, 2)
+            clean_tensor = torch.from_numpy(clean_norm).to(device)   # (1, chirps, seq_len, 2)
 
             # ランダムノイズで干渉ブロックを生成
             z = torch.randn(1, latent_dim, device=device)
             with torch.no_grad():
-                fake_norm = G(clean_tensor, z)  # (1, chirps, seq_len, 2)
+                fake_norm = G(clean_tensor, z)          # (1, chirps, seq_len, 2)
 
             # 逆正規化して元のスケールに戻す
-            fake_np = fake_norm.cpu().numpy()   # (1, chirps, seq_len, 2)
+            fake_np = fake_norm.cpu().numpy()
             fake    = utils.max_abs_denormalize_complex_channels(fake_np, max_abs)
-            fake    = fake.squeeze(0)           # (chirps, seq_len, 2)
+            fake    = fake.squeeze(0)                   # (chirps, seq_len, 2)
+
+            clean_denorm = utils.max_abs_denormalize_complex_channels(
+                clean_norm, max_abs
+            ).squeeze(0)                                # (chirps, seq_len, 2)
+
+            # IFFT: 時間領域出力が必要なとき
+            if apply_ifft:
+                fake         = utils.apply_range_ifft(fake)
+                clean_denorm = utils.apply_range_ifft(clean_denorm)
 
             # テキストファイルとして保存 (1行 = 1チャープ, seq_len 列)
             file_num = file_idx + 1
             np.savetxt(
                 os.path.join(out_real, f"real_input_{file_num:04d}.txt"),
-                fake[:, :, 0],
-                fmt="%.6e",
+                fake[:, :, 0], fmt="%.6e",
             )
             np.savetxt(
                 os.path.join(out_imag, f"imag_input_{file_num:04d}.txt"),
-                fake[:, :, 1],
-                fmt="%.6e",
+                fake[:, :, 1], fmt="%.6e",
             )
-
-            # クリーン信号 (label) を元のスケールに戻して保存
-            clean_denorm = utils.max_abs_denormalize_complex_channels(
-                clean_norm, max_abs
-            ).squeeze(0)  # (chirps, seq_len, 2)
             np.savetxt(
                 os.path.join(out_label_real, f"real_label_{file_num:04d}.txt"),
-                clean_denorm[:, :, 0],
-                fmt="%.6e",
+                clean_denorm[:, :, 0], fmt="%.6e",
             )
             np.savetxt(
                 os.path.join(out_label_imag, f"imag_label_{file_num:04d}.txt"),
-                clean_denorm[:, :, 1],
-                fmt="%.6e",
+                clean_denorm[:, :, 1], fmt="%.6e",
             )
 
         print(f"  {var_tag} 完了")
@@ -141,4 +164,5 @@ def generate_2d() -> None:
 
 
 if __name__ == "__main__":
-    generate_2d()
+    # output_domain="time" にすると IFFT を適用して時間領域で保存する
+    generate_2d(output_domain="same")

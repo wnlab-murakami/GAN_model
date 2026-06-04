@@ -20,9 +20,10 @@ DATA_CONFIG = {
 
 PREPROCESS_CONFIG = {
     "normalization_method": "max_abs_scaling",
-    "sequence_length":      1024,  # モデルに入力するシーケンスの長さ (サンプル数)
+    "sequence_length":      512,  # モデルに入力するシーケンスの長さ (サンプル数)
     "num_features":         2,    # [実部, 虚部]
     "chirps_per_file":      128,  # 1ファイルあたりのチャープ数 (HDF5 形式で使用)
+     "use_range_fft":       False, # レンジ FFT を前処理に使用するか (True のとき、GAN もレンジ-チャープマップを扱う)
 }
 
 MODEL_CONFIG = {
@@ -33,11 +34,11 @@ MODEL_CONFIG = {
 TRAIN_CONFIG = {
     "epochs":            200,
     "batch_size":        16,
-    "lr_g":              1e-4,   # Generator 学習率
-    "lr_d":              4e-4,   # Critic 学習率 (TTUR: D > G)
-    "n_critic":          5,      # Critic 更新回数 / Generator 1回
+    "lr_g":              2e-4,   # Generator 学習率
+    "lr_d":              5e-5,   # Critic 学習率 (TTUR: D < G)
+    "n_critic":          2,      # Critic 更新回数 / Generator 1回
     "lambda_gp":         10.0,   # Gradient Penalty 重み
-    "lambda_l1":         0.0,    # L1 Loss 重み (0 = 使わない、多様性重視)
+    "lambda_l1":         50.0,    # L1 Loss 重み (0 = 使わない、多様性重視)
     "validation_split":  0.2,
     "save_interval":     20,     # 何エポックごとにチェックポイントを保存するか
     "use_wandb":         True,
@@ -54,7 +55,7 @@ GENERATE_CONFIG = {
 
 GENERATE_CONFIG_2D = {
 # 学習済み 2D モデルのディレクトリ (train_2d.py が "GAN_YYYYMMDD_HHMM_2D" で保存)
-"trained_model_path": os.path.join(BASE_DIR, "saved_models", "GAN_20260528_2233_2D"),
+"trained_model_path": os.path.join(BASE_DIR, "saved_models", "GAN_20260603_1614_2D"),
 "output_path": os.path.join(BASE_DIR, "generated_data", f"{DT_NOW:%Y%m%d_%H%M}_2D"),
 "num_variations": 5,
 }

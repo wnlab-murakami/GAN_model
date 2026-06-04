@@ -2,3 +2,4 @@ __pycache__/
 learning_data/
 saved_models/
 generated_data/
+wandb/
